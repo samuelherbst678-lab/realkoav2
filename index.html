@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Koalitionsrechner – Proportionale Sitzverteilung</title>
+<style>
+  :root {
+    --bg:#0b0f14; --card:#121823; --ink:#e8eef7; --muted:#a6b0bf;
+    --ok:#37d07a; --bad:#ff6a6a; --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:32px; color:var(--ink);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Helvetica,Arial;
+    background:radial-gradient(1200px 800px at 80% -20%, #1b2b45 0%, #0b0f14 55%);
+  }
+  h1{margin:0 0 8px; font-size:clamp(20px,2.6vw,32px)}
+  p.sub{margin:0 0 24px; color:var(--muted)}
+  .wrap{display:grid; gap:16px; grid-template-columns:380px 1fr}
+  @media (max-width:980px){.wrap{grid-template-columns:1fr}}
+  .card{
+    background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01));
+    border:1px solid rgba(255,255,255,.06);
+    border-radius:var(--radius); padding:16px;
+  }
+  .row{display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap}
+  .row>*{flex:1}
+  input,select,button{
+    border-radius:10px; border:1px solid rgba(255,255,255,.12);
+    background:#0f1420; color:var(--ink); padding:10px 12px;
+  }
+  input[type="color"]{padding:0; height:38px; width:100%}
+  button{cursor:pointer; font-weight:600}
+  button.secondary{background:#0f1420}
+  .party-row{
+    display:grid; grid-template-columns:26px 1.3fr .9fr .7fr 1fr 26px;
+    gap:8px; align-items:center; margin:8px 0;
+  }
+  .party-row .handle{opacity:.6; text-align:center; font-size:12px}
+  .party-row .del{opacity:.7; cursor:pointer; text-align:center}
+  .legend{display:flex; flex-wrap:wrap; gap:8px}
+  .legend .item{
+    display:flex; align-items:center; gap:8px; font-size:13px;
+    background:#0f1420; border:1px solid rgba(255,255,255,.08);
+    padding:6px 10px; border-radius:999px;
+  }
+  .sw{width:14px; height:14px; border-radius:4px; display:inline-block; border:1px solid rgba(255,255,255,.3)}
+  .pill{display:inline-flex; align-items:center; gap:8px; font-size:13px; padding:6px 10px; border-radius:999px; background:#0f1420; border:1px solid rgba(255,255,255,.08)}
+  .checklist{display:flex; flex-wrap:wrap; gap:10px}
+  .checklist label{display:flex; align-items:center; gap:8px; border:1px solid rgba(255,255,255,.08); padding:8px 10px; border-radius:999px; background:#0f1420}
+  .ok{color:var(--ok)} .bad{color:var(--bad)}
+  svg{display:block; width:100%; height:auto}
+  /* kleine Fade/Scale für neue/wegfallende Bögen */
+  .arc{opacity:1; transition:opacity .25s ease, transform .25s ease}
+  .arc.enter{opacity:0; transform:scale(0.98)}
+  .arc.leave{opacity:0; transform:scale(1.02)}
+</style>
+</head>
+<body>
+  <h1>Koalitionsrechner – Proportionale Sitzverteilung</h1>
+  <p class="sub">Koalition links im Halbkreis (in deiner Listen-Reihenfolge) – sanfte Animation beim Anklicken.</p>
+
+  <div class="wrap">
+    <section class="card" id="inputsCard">
+      <div class="row">
+        <div><label>Gesamtsitze</label><input id="totalSeats" type="number" value="630"></div>
+        <div><label>Sperrklausel (%)</label><input id="threshold" type="number" value="5" step="0.1"></div>
+      </div>
+      <div class="row">
+        <div><label>Wahlverfahren</label>
+          <select id="method">
+            <option value="sls" selected>Sainte-Laguë/Schepers</option>
+            <option value="dhondt">d’Hondt</option>
+            <option value="hare">Hare-Niemeyer</option>
+          </select>
+        </div>
+        <div><label>Ausnahmen (z. B. SSW)</label><input id="exceptions" placeholder="SSW"></div>
+      </div>
+      <div class="row" style="justify-content:space-between">
+        <button id="addRowBtn" type="button">+ Partei hinzufügen</button>
+        <div style="display:flex; gap:8px">
+          <button id="resetBtn" class="secondary" type="button">Zurücksetzen</button>
+          <button id="calcBtn" type="button">Neu berechnen</button>
+        </div>
+      </div>
+      <div class="muted" style="margin:6px 0 4px">Parteien & Prozentwerte (Name, % und Farbe frei wählbar)</div>
+      <div id="partyList"></div>
+    </section>
+
+    <section class="card">
+      <svg id="seatChart" viewBox="0 0 900 620" preserveAspectRatio="xMidYMin meet"></svg>
+      <div class="legend" id="legend"></div>
+
+      <div class="row" style="margin-top:12px">
+        <div class="pill"><strong>Mehrheitsschwelle:</strong> <span id="majorityLbl">316</span></div>
+        <div class="pill"><strong>Sitze Koalition:</strong> <span id="coalSeats">0</span></div>
+        <div class="pill"><strong>Mehrheit?</strong> <span id="coalMajority" class="bad">nein</span></div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h3 style="margin:0 0 8px">Koalitionen testen</h3>
+        <div class="checklist" id="coalitionChecklist"></div>
+      </div>
+    </section>
+  </div>
+
+<script>
+/* ===== Helpers & State ===== */
+const $  = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+let selectedCoalition = new Set(); // Namen der angehakten Parteien
+const GREY = "#b7bdc7";
+
+/* ===== Defaults ===== */
+const defaultParties = [
+  {name:"CDU/CSU", color:"#000000", pct:28.0, exception:false},
+  {name:"SPD",     color:"#E3000F", pct:17.0, exception:false},
+  {name:"Grüne",   color:"#1FA12E", pct:12.0, exception:false},
+  {name:"FDP",     color:"#FFED00", pct:6.0,  exception:false},
+  {name:"AfD",     color:"#009EE0", pct:20.0, exception:false},
+  {name:"Linke",   color:"#BE3075", pct:6.0,  exception:false},
+  {name:"BSW",     color:"#FF6A00", pct:7.0,  exception:false},
+  {name:"Andere",  color:"#7e8799", pct:4.0,  exception:false}
+];
+
+/* ===== Inputs lesen ===== */
+function readInputs(){
+  const totalSeats = parseInt($("#totalSeats").value) || 0;
+  const threshold  = parseFloat($("#threshold").value) || 0;
+  const method     = $("#method").value;
+  const exc        = ($("#exceptions").value || "").split(",").map(s=>s.trim()).filter(Boolean);
+  const partyRows  = $$("#partyList .party-row");
+  const parties    = partyRows.map(row => ({
+    name: row.querySelector(".pName").value.trim() || "Partei",
+    color: row.querySelector(".pColor").value,
+    pct: parseFloat(row.querySelector(".pPct").value) || 0,
+    exception: row.querySelector(".pExc").checked
+  }));
+  return {totalSeats, threshold, method, exceptions:exc, parties};
+}
+
+/* ===== UI bauen ===== */
+function setDefaults(){
+  $("#partyList").innerHTML = "";
+  defaultParties.forEach(addPartyRow);
+  calcAndRender();
+}
+
+function addPartyRow(p = {name:"Neue Partei", color:"#8888ff", pct:0, exception:false}){
+  const row = document.createElement("div");
+  row.className = "party-row";
+  row.innerHTML = `
+    <div class="handle">⋮⋮</div>
+    <input class="pName" type="text"   value="${p.name}"  title="Parteiname">
+    <input class="pPct"  type="number" value="${p.pct}"   min="0" max="100" step="0.1" title="Prozent">
+    <input class="pColor" type="color" value="${p.color}" title="Farbe">
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#a6b0bf">
+      <input type="checkbox" class="pExc" ${p.exception?"checked":""}> Ausnahme
+    </label>
+    <div class="del" title="Entfernen">✕</div>
+  `;
+  row.querySelector(".del").onclick = () => { row.remove(); calcAndRender(); };
+  $("#partyList").appendChild(row);
+  row.querySelectorAll("input").forEach(inp => inp.addEventListener("change", calcAndRender));
+}
+
+/* ===== Filter & Zuteilung ===== */
+function filterByThreshold(parties, threshold, exceptions){
+  return parties.filter(p => (p.pct>0) && (p.pct >= threshold || exceptions.includes(p.name) || p.exception));
+}
+
+// Sainte-Laguë/Schepers
+function sls(parties, seats){
+  const factor = 1_000_000, Q=[];
+  parties.forEach((p,i)=>{
+    const v=p.pct*factor; for(let k=0;k<seats+5;k++){ Q.push({i,val:v/(k+0.5)}) }
+  });
+  Q.sort((a,b)=>b.val-a.val);
+  const top=Q.slice(0,seats), c=new Array(parties.length).fill(0);
+  top.forEach(q=>c[q.i]++); return c;
+}
+
+// d’Hondt
+function dhondt(parties, seats){
+  const factor = 1_000_000, Q=[];
+  parties.forEach((p,i)=>{
+    const v=p.pct*factor; for(let k=1;k<=seats;k++){ Q.push({i,val:v/k}) }
+  });
+  Q.sort((a,b)=>b.val-a.val);
+  const top=Q.slice(0,seats), c=new Array(parties.length).fill(0);
+  top.forEach(q=>c[q.i]++); return c;
+}
+
+// Hare-Niemeyer
+function hareNiemeyer(parties, seats){
+  const votes=parties.map(p=>p.pct), total=votes.reduce((a,b)=>a+b,0);
+  if(total===0) return new Array(parties.length).fill(0);
+  const quotas=votes.map(v=>v/total*seats);
+  const base=quotas.map(q=>Math.floor(q));
+  let assigned=base.reduce((a,b)=>a+b,0);
+  const rem=quotas.map((q,i)=>({i,r:q-Math.floor(q)})).sort((a,b)=>b.r-a.r);
+  for(let k=0; assigned<seats && k<rem.length; k++){ base[rem[k].i]++; assigned++; }
+  return base;
+}
+
+function allocateSeats(parties, seats, method){
+  if(method==="dhondt") return dhondt(parties, seats);
+  if(method==="hare")   return hareNiemeyer(parties, seats);
+  return sls(parties, seats);
+}
+
+function computeSeats(parties, seats, threshold, exceptions, method){
+  const ok = filterByThreshold(parties, threshold, exceptions);
+  const result = parties.map(p => ({...p, seats:0}));
+  if(ok.length===0) return result;
+  const counts = allocateSeats(ok, seats, method);
+  ok.forEach((p, idx) => {
+    const j = parties.findIndex(q => q.name===p.name && q.color===p.color && q.pct===p.pct);
+    if(j>=0) result[j].seats = counts[idx];
+  });
+  return result;
+}
+
+/* ===== Layout-Helfer ===== */
+function layoutArcs(data, totalSeats, selectedSet){
+  const isCoal = p => selectedSet && selectedSet.has(p.name);
+  const coalition = data.filter(isCoal);           // in Listenreihenfolge
+  const others    = data.filter(p => !isCoal(p));
+  const ordered   = [...coalition, ...others];
+
+  let total = ordered.reduce((a,b)=>a+(b.seats||0),0);
+  if(total===0) total = totalSeats;
+
+  let start = Math.PI;
+  return ordered.map(p=>{
+    const share = (p.seats||0)/total;
+    const sweep = share*Math.PI;
+    const arc   = {name:p.name, color:p.color, fill:isCoal(p)?p.color:GREY, start, end:start+sweep};
+    start += sweep;
+    return arc;
+  });
+}
+
+function arcD(r1,r2,a0,a1){
+  const large = (a1-a0)>Math.PI ? 1 : 0;
+  const x0o=r1*Math.cos(a0),y0o=r1*Math.sin(a0);
+  const x1o=r1*Math.cos(a1),y1o=r1*Math.sin(a1);
+  const x1i=r2*Math.cos(a1),y1i=r2*Math.sin(a1);
+  const x0i=r2*Math.cos(a0),y0i=r2*Math.sin(a0);
+  return `M${x0o} ${y0o}A${r1} ${r1} 0 ${large} 1 ${x1o} ${y1o}L${x1i} ${y1i}A${r2} ${r2} 0 ${large} 0 ${x0i} ${y0i}Z`;
+}
+
+/* ===== Zeichnen mit sanfter Animation ===== */
+function drawHalfRing(svg, data, totalSeats, selectedSet){
+  const w=900, h=620, cx=w/2, cy=h*0.85;
+  const rOuter=260, rInner=80;
+
+  // Gruppe initialisieren
+  let g = svg.querySelector("g.seats");
+  if(!g){
+    svg.innerHTML = "";
+    svg.setAttribute("viewBox","0 0 900 620");
+    svg.setAttribute("preserveAspectRatio","xMidYMin meet");
+    g = document.createElementNS("http://www.w3.org/2000/svg","g");
+    g.setAttribute("class","seats");
+    g.setAttribute("transform",`translate(${cx},${cy})`);
+    svg.appendChild(g);
+  }
+
+  const newArcs = layoutArcs(data, totalSeats, selectedSet);
+
+  // Map alter Winkel (für Tween) lesen
+  const prev = svg.__angles || {};
+  const next = {};
+  const duration = 350; // ms
+  const ease = t => t<.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2;
+
+  // Pfade anlegen/aktualisieren
+  newArcs.forEach(arc=>{
+    next[arc.name] = {start:arc.start, end:arc.end};
+
+    let path = g.querySelector(`path[data-name="${CSS.escape(arc.name)}"]`);
+    if(!path){
+      path = document.createElementNS("http://www.w3.org/2000/svg","path");
+      path.dataset.name = arc.name;
+      path.setAttribute("class","arc enter");
+      g.appendChild(path);
+      // kleiner Delay, damit CSS-Enter greift
+      requestAnimationFrame(()=> path.classList.remove("enter"));
+    }
+    path.setAttribute("fill", arc.fill);
+    path.setAttribute("stroke","rgba(255,255,255,.12)");
+    path.setAttribute("stroke-width","1");
+  });
+
+  // Entfernte Pfade ausfaden
+  g.querySelectorAll("path.arc").forEach(p=>{
+    const n = p.dataset.name;
+    if(!newArcs.find(a=>a.name===n)){
+      p.classList.add("leave");
+      setTimeout(()=>p.remove(), 250);
+    }
+  });
+
+  // Numerische Tween-Animation der Winkel
+  const startTime = performance.now();
+  (function animate(now){
+    const t = Math.min(1, (now - startTime)/duration);
+    const k = ease(t);
+
+    newArcs.forEach(arc=>{
+      const prevArc = prev[arc.name] || {start:arc.start, end:arc.start}; // neu -> von Nullbreite
+      const curStart = prevArc.start + (arc.start - prevArc.start)*k;
+      const curEnd   = prevArc.end   + (arc.end   - prevArc.end)*k;
+
+      const path = g.querySelector(`path[data-name="${CSS.escape(arc.name)}"]`);
+      if(path){
+        path.setAttribute("d", arcD(rOuter, rInner, curStart, curEnd));
+      }
+    });
+
+    if(t < 1){ requestAnimationFrame(animate); }
+    else { svg.__angles = next; }
+  })(performance.now());
+
+  // Mehrheitstext setzen
+  $("#majorityLbl").textContent = (Math.floor(totalSeats/2)+1).toString();
+}
+
+/* ===== Legend & Koalitionsliste ===== */
+function renderLegend(data){
+  const legend = $("#legend"); legend.innerHTML = "";
+  data.filter(p=>(p.seats||0)>0).forEach(p=>{
+    const el=document.createElement("div"); el.className="item";
+    el.innerHTML=`<span class="sw" style="background:${p.color}"></span><strong>${p.name}</strong> – ${p.seats} Sitze`;
+    legend.appendChild(el);
+  });
+}
+
+function renderChecklist(data){
+  // nur Parteien mit Sitzen berücksichtigen
+  const namesShown = new Set(data.filter(p=>(p.seats||0)>0).map(p=>p.name));
+  selectedCoalition = new Set([...selectedCoalition].filter(n => namesShown.has(n)));
+
+  const wrap = $("#coalitionChecklist"); wrap.innerHTML = "";
+  data.filter(p=>(p.seats||0)>0).forEach(p=>{
+    const lab = document.createElement("label");
+    const checked = selectedCoalition.has(p.name) ? "checked" : "";
+    lab.innerHTML = `
+      <input type="checkbox" data-name="${p.name}" ${checked}>
+      <span class="sw" style="background:${p.color}"></span> ${p.name} (${p.seats})
+    `;
+    wrap.appendChild(lab);
+  });
+
+  wrap.querySelectorAll("input[type=checkbox]").forEach(cb=>{
+    cb.addEventListener("change", ()=>{
+      const n = cb.dataset.name;
+      if(cb.checked) selectedCoalition.add(n); else selectedCoalition.delete(n);
+      recomputeCoalitionSum();
+      drawHalfRing($("#seatChart"), window.__lastSeats||[], parseInt($("#totalSeats").value)||0, selectedCoalition);
+    });
+  });
+}
+
+/* ===== Koalitionssumme & Mehrheitsstatus ===== */
+function recomputeCoalitionSum(){
+  const totalSeats = parseInt($("#totalSeats").value) || 0;
+  const majority   = Math.floor(totalSeats/2) + 1;
+  const data       = window.__lastSeats || [];
+
+  const sum = data.reduce((a,p)=> a + (selectedCoalition.has(p.name) ? (p.seats||0) : 0), 0);
+  $("#coalSeats").textContent = sum;
+  const ok = sum >= majority;
+  $("#coalMajority").textContent = ok ? "ja" : "nein";
+  $("#coalMajority").className   = ok ? "ok" : "bad";
+}
+
+/* ===== Rechnen + Rendern ===== */
+function calcAndRender(){
+  const {totalSeats, threshold, method, exceptions, parties} = readInputs();
+  const seatsData = computeSeats(parties, totalSeats, threshold, exceptions, method);
+  const shown = seatsData.filter(p => (p.seats||0)>0);
+  window.__lastSeats = shown;
+
+  drawHalfRing($("#seatChart"), shown, totalSeats, selectedCoalition);
+  renderLegend(shown);
+  renderChecklist(shown);
+  recomputeCoalitionSum();
+}
+
+/* ===== Events ===== */
+$("#addRowBtn").addEventListener("click", ()=>{ addPartyRow(); calcAndRender(); });
+$("#resetBtn").addEventListener("click", setDefaults);
+$("#calcBtn").addEventListener("click", calcAndRender);
+$("#totalSeats").addEventListener("change", calcAndRender);
+$("#threshold").addEventListener("change", calcAndRender);
+$("#method").addEventListener("change", calcAndRender);
+$("#exceptions").addEventListener("change", calcAndRender);
+
+/* ===== Start ===== */
+setDefaults();
+</script>
+</body>
+</html>
